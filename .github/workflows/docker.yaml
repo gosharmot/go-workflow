@@ -1,0 +1,78 @@
+name: Build docker
+
+permissions:
+  contents: read
+  packages: write
+
+on:
+  workflow_call:
+    inputs:
+      binary-name:
+        description: 'Output binary name'
+        required: true
+        type: string
+      dockerfile-path:
+        description: 'Dockerfile path'
+        required: false
+        default: './Dockerfile'
+        type: string
+      image-name:
+        description: 'Full Docker image name to push (e.g. org/app:tag)'
+        required: true
+        type: string
+      registry-host:
+        description: 'Registry host (e.g. ghcr.io)'
+        required: true
+        type: string
+      main-file:
+        description: 'Package with cmd directory'
+        required: true
+        type: string
+    secrets:
+      GIT_PUSH_TOKEN:
+        description: 'Token to access private repos'
+        required: true
+
+jobs:
+  build-docker:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assemble full Dockerfile
+        run: |
+          echo 'FROM golang:alpine AS builder' > FullDockerfile
+          echo '' >> FullDockerfile
+          echo 'RUN apk update --no-cache && apk add --no-cache tzdata && apk add --no-cache git' >> FullDockerfile
+          echo '' >> FullDockerfile
+          echo 'RUN git config \' >> FullDockerfile
+          echo '    --global \' >> FullDockerfile
+          echo '    url."https://${{ secrets.GIT_PUSH_TOKEN }}@github.com/".insteadOf \' >> FullDockerfile
+          echo '    "https://github.com/"' >> FullDockerfile
+          echo 'ENV CGO_ENABLED=0' >> FullDockerfile
+          echo 'ENV GOOS=linux' >> FullDockerfile
+          echo '' >> FullDockerfile
+          echo 'WORKDIR /build' >> FullDockerfile
+          echo 'COPY go.mod .' >> FullDockerfile
+          echo 'COPY go.sum .' >> FullDockerfile
+          echo 'RUN go mod download' >> FullDockerfile
+          echo '' >> FullDockerfile
+          echo 'COPY . .' >> FullDockerfile
+          echo 'RUN go build -ldflags="-s -w" -o /${{ inputs.binary-name }} ${{ inputs.main-file }}' >> FullDockerfile
+          echo '' >> FullDockerfile
+          cat "${{ inputs.dockerfile-path }}" >> FullDockerfile
+          cat FullDockerfile   
+
+      - name: Login to Docker Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ${{ inputs.registry-host }} -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and push
+        run: |
+          FULL_IMAGE_NAME="${{ inputs.registry-host }}/${{ inputs.image-name }}"
+          
+          docker build \
+            -f FullDockerfile \
+            -t $FULL_IMAGE_NAME .
+          
+          docker push $FULL_IMAGE_NAME

@@ -1,0 +1,53 @@
+name: test
+
+on:
+  workflow_call:
+    inputs:
+      go-version:
+        description: 'Go version to use'
+        required: false
+        default: '1.22'
+        type: string
+    secrets:
+      GIT_PUSH_TOKEN:
+        description: 'Token to access private repositories'
+        required: true
+      CODECOV_TOKEN:
+        description: 'Token to upload coverage to Codecov'
+        required: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      GIT_PUSH_TOKEN: ${{ secrets.GIT_PUSH_TOKEN }}
+      GOPRIVATE: ${{ github.repository }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: auth
+        run: git config --global url.https://$GIT_PUSH_TOKEN@github.com/.insteadOf https://github.com/
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go-version }}
+
+      - name: Run tests with coverage
+        run: |
+          mkdir -p coverage
+          go test -v -coverprofile=coverage/coverage.out ./... -p 4 ./...
+
+      - name: Upload coverage to Codecov
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        if: env.CODECOV_TOKEN != ''
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage/coverage.out
+          flags: unittests
+          name: go-tests-${{ github.sha }}
+          fail_ci_if_error: true
+          slug: ${{ github.action_repository }}

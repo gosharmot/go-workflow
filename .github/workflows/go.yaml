@@ -1,0 +1,64 @@
+name: go
+
+on:
+  workflow_call:
+    inputs:
+      go-version:
+        description: 'Go version to use'
+        required: false
+        default: '1.22'
+        type: string
+      registry-host:
+        description: 'Registry host (e.g. ghcr.io)'
+        required: false
+        default: 'ghcr.io'
+        type: string
+    secrets:
+      GIT_PUSH_TOKEN:
+        description: 'Token to access private repositories'
+        required: true
+      CODECOV_TOKEN:
+        description: 'Token to upload coverage to Codecov'
+        required: false
+
+jobs:
+  set-tag:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.set_tag.outputs.tag }}
+      name: ${{ steps.set_tag.outputs.name }}
+    steps:
+      - id: set_tag
+        run: |
+          TAG=${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}
+          TAG=${TAG//\//-}
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo $TAG
+          REPO_NAME=${GITHUB_REPOSITORY#*/}
+          echo "name=$REPO_NAME" >> $GITHUB_OUTPUT
+          echo $REPO_NAME
+
+  test:
+    uses: ./.github/workflows/test.yaml
+    with:
+      go-version: ${{inputs.go-version}}
+    secrets:
+      GIT_PUSH_TOKEN: ${{secrets.GIT_PUSH_TOKEN}}
+      CODECOV_TOKEN: ${{secrets.CODECOV_TOKEN}}
+
+  lint:
+    uses: ./.github/workflows/linter.yaml
+    with:
+      go-version: ${{inputs.go-version}}
+
+  docker-build:
+    needs:
+      - set-tag
+    uses: ./.github/workflows/docker.yaml
+    with:
+      binary-name: ${{needs.set-tag.outputs.name}}
+      image-name: ${{ github.repository }}:${{ needs.set-tag.outputs.tag }}-${{ github.sha }}
+      registry-host: ${{inputs.registry-host}}
+      main-file: ./cmd/${{ needs.set-tag.outputs.name }}/*.go
+    secrets:
+      GIT_PUSH_TOKEN: ${{secrets.GIT_PUSH_TOKEN}}
